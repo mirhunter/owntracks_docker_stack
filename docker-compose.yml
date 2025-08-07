@@ -1,0 +1,74 @@
+services:
+  db:
+    image: mysql
+    container_name: mysql
+    restart: unless-stopped
+    volumes:
+      - ./mysql/data:/var/lib/mysql
+    ports:
+      - 3306:3306
+    environment:
+      - TZ=America/Chicago
+      - MYSQL_ROOT_PASSWORD=SuperSecret
+      - MYSQL_DATABASE=owntracks
+      - MYSQL_USER=owntracks
+      - MYSQL_PASSWORD=secret
+    networks:
+      - traefik
+  mqtt:
+    image: eclipse-mosquitto:openssl
+    container_name: mosquitto
+    restart: unless-stopped
+    ports:
+      - 1883:1883
+      - 8883:8883
+      - 9001:9001
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - /images/docker/nginx-proxy-manager/letsencrypt:/mosquitto/config/letsencrypt
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+    environment:
+      - TZ=America/Chicago
+    networks:
+      - traefik
+  apache:
+    image: webdevops/php-apache:8.4
+    volumes:
+      - ./www:/app
+    user: "1000:1000"
+    deploy:
+      mode: replicated
+      replicas: 1
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.map-http.rule=Host(`map.domain.tld`)"
+      - "traefik.http.routers.map-http.entrypoints=web"
+      - "traefik.http.routers.map-http.middlewares=map-redirectscheme"
+      - "traefik.http.routers.map-https.rule=Host(`map.domain.tld`)"
+      - "traefik.http.routers.map-https.entrypoints=websecure"
+      - "traefik.http.routers.map-https.tls=true"
+      - "traefik.http.routers.map-https.tls.certresolver=letsencrypt"
+      - "traefik.http.services.map-service.loadbalancer.server.port=80"
+      - "traefik.http.middlewares.map-redirectscheme.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.map-redirectscheme.redirectscheme.permanent=true"
+    environment:
+      - WEB_DOCUMENT_ROOT=/app
+      - PHP_MEMORY_LIMIT=512M
+    networks:
+      - traefik
+  recorder:
+    image: owntracks-mqtt-mysql
+    environment:
+      - MQTT_BROKER=$MQTT_SERVER
+      - MQTT_PORT=$MQTT_PORT
+      - MQTT_USERNAME=$MQTT_USER
+      - MQTT_PASSWORD=$MQTT_PASSWORD
+      - MYSQL_HOST=$MYSQL_SERVER
+      - MYSQL_USER=$MYSQL_USER
+      - MYSQL_PASSWORD=$MYSQL_PASSWORD
+      - MYSQL_DATABASE=$MYSQL_SCHEMA
+
+networks:
+  traefik:
+    external: true
