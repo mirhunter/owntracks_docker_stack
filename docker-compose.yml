@@ -8,38 +8,54 @@ services:
     ports:
       - 3306:3306
     environment:
-      - TZ=America/Chicago
-      - MYSQL_ROOT_PASSWORD=SuperSecret
-      - MYSQL_DATABASE=owntracks
-      - MYSQL_USER=owntracks
-      - MYSQL_PASSWORD=secret
+      - TZ=${TZ}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
     networks:
-      - traefik
+      - backend
   mqtt:
     image: eclipse-mosquitto:openssl
     container_name: mosquitto
     restart: unless-stopped
-    ports:
-      - 1883:1883
-      - 8883:8883
-      - 9001:9001
     volumes:
       - ./mosquitto/config:/mosquitto/config
-      - /images/docker/nginx-proxy-manager/letsencrypt:/mosquitto/config/letsencrypt
+      - ./letsencrypt:/mosquitto/config/letsencrypt
       - ./mosquitto/data:/mosquitto/data
       - ./mosquitto/log:/mosquitto/log
     environment:
-      - TZ=America/Chicago
+      - TZ=${TZ}
+    healthcheck:
+      test: ["CMD", "mosquitto_ctrl", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    labels:
+      - "traefik.enable=true"
+      - "traefik.tcp.routers.mqtt.rule=HostSNI(`*`)"
+      - "traefik.tcp.routers.mqtt.entrypoints=mqtt"
+      - "traefik.tcp.services.mqtt.loadbalancer.server.port=1883"
+      - "traefik.tcp.routers.mqtts.rule=HostSNI(`*`)"
+      - "traefik.tcp.routers.mqtts.entrypoints=mqtts"
+      - "traefik.tcp.services.mqtts.loadbalancer.server.port=8883"
     networks:
       - traefik
+      - backend
   apache:
     image: webdevops/php-apache:8.4
     volumes:
       - ./www:/app
-    user: "1000:1000"
     deploy:
       mode: replicated
       replicas: 1
+    depends_on:
+      - db
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.map-http.rule=Host(`map.domain.tld`)"
@@ -53,22 +69,33 @@ services:
       - "traefik.http.middlewares.map-redirectscheme.redirectscheme.scheme=https"
       - "traefik.http.middlewares.map-redirectscheme.redirectscheme.permanent=true"
     environment:
-      - WEB_DOCUMENT_ROOT=/app
-      - PHP_MEMORY_LIMIT=512M
+      - WEB_DOCUMENT_ROOT=${WEB_DOCUMENT_ROOT}
+      - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/status.php"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
     networks:
       - traefik
+      - backend
   recorder:
     image: owntracks-mqtt-mysql
+    depends_on:
+      - db
+      - mqtt
     environment:
-      - MQTT_BROKER=$MQTT_SERVER
-      - MQTT_PORT=$MQTT_PORT
-      - MQTT_USERNAME=$MQTT_USER
-      - MQTT_PASSWORD=$MQTT_PASSWORD
-      - MYSQL_HOST=$MYSQL_SERVER
-      - MYSQL_USER=$MYSQL_USER
-      - MYSQL_PASSWORD=$MYSQL_PASSWORD
-      - MYSQL_DATABASE=$MYSQL_SCHEMA
+      - MQTT_BROKER=${MQTT_BROKER}
+      - MQTT_PORT=${MQTT_PORT}
+      - MQTT_USERNAME=${MQTT_USERNAME}
+      - MQTT_PASSWORD=${MQTT_PASSWORD}
+      - MYSQL_HOST=${MYSQL_HOST}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
 
 networks:
   traefik:
     external: true
+  backend:
+    driver: bridge
